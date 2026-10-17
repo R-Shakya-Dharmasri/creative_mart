@@ -1,18 +1,23 @@
 
-import mongoose, { Schema, Document } from "mongoose";
+import mongoose, { Schema, type Document } from "mongoose";
 
 export interface ITemplate extends Document {
   title: string;
   description: string;
   category: string;
   software: string;
+
   thumbnailUrl: string;
   previewImages: string[];
+  previewVideos: string[];
+
   downloadUrl: string;
   fileSize: string;
+
   tags: string[];
   isFree: boolean;
   downloads: number;
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -30,6 +35,7 @@ const templateSchema = new Schema<ITemplate>(
       type: String,
       required: true,
       trim: true,
+      maxlength: 5000,
     },
 
     category: {
@@ -41,6 +47,7 @@ const templateSchema = new Schema<ITemplate>(
     software: {
       type: String,
       default: "Other",
+      trim: true,
     },
 
     thumbnailUrl: {
@@ -49,6 +56,11 @@ const templateSchema = new Schema<ITemplate>(
     },
 
     previewImages: {
+      type: [String],
+      default: [],
+    },
+
+    previewVideos: {
       type: [String],
       default: [],
     },

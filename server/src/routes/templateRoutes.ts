@@ -3,6 +3,11 @@ import { Router } from "express";
 import mongoose from "mongoose";
 import Template from "../models/Template.js";
 
+import { requireAdmin } from "../middleware/authMiddleware.js";
+import { uploadTemplateFiles } from "../middleware/uploadMiddleware.js";
+import { createTemplate } from "../controllers/templateController.js";
+
+
 const router = Router();
 
 // GET /api/templates - Get all templates
@@ -62,5 +67,14 @@ router.get("/:id", async (req, res) => {
     });
   }
 });
+
+
+router.post(
+  "/",
+  requireAdmin,
+  uploadTemplateFiles,
+  createTemplate
+);
+
 
 export default router;

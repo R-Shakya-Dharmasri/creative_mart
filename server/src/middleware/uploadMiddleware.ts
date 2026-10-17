@@ -4,18 +4,68 @@ import path from "node:path";
 import fs from "node:fs";
 import crypto from "node:crypto";
 
-const uploadDirectory = path.resolve(
-  process.cwd(),
-  "uploads"
-);
+const uploadRoot = path.resolve(process.cwd(), "uploads");
 
-fs.mkdirSync(uploadDirectory, {
-  recursive: true,
+const folders = {
+  thumbnail: path.join(uploadRoot, "thumbnails"),
+  previews: path.join(uploadRoot, "previews"),
+  templateFile: path.join(uploadRoot, "originals"),
+};
+
+Object.values(folders).forEach((folder) => {
+  fs.mkdirSync(folder, { recursive: true });
 });
 
+const allowedTypes: Record<string, string[]> = {
+  thumbnail: [
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+  ],
+
+  previews: [
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+    "video/mp4",
+    "video/webm",
+  ],
+
+  templateFile: [
+    "application/zip",
+    "application/x-zip-compressed",
+    "application/octet-stream",
+  ],
+};
+
+const allowedExtensions: Record<string, string[]> = {
+  thumbnail: [".jpg", ".jpeg", ".png", ".webp"],
+
+  previews: [
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+    ".gif",
+    ".mp4",
+    ".webm",
+  ],
+
+  templateFile: [".zip"],
+};
+
 const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    cb(null, uploadDirectory);
+  destination: (_req, file, cb) => {
+    const folder =
+      folders[file.fieldname as keyof typeof folders];
+
+    if (!folder) {
+      cb(new Error("Invalid upload field"), "");
+      return;
+    }
+
+    cb(null, folder);
   },
 
   filename: (_req, file, cb) => {
@@ -23,22 +73,9 @@ const storage = multer.diskStorage({
       .extname(file.originalname)
       .toLowerCase();
 
-    const uniqueName = crypto.randomUUID();
-
-    cb(null, `${uniqueName}${extension}`);
+    cb(null, `${crypto.randomUUID()}${extension}`);
   },
 });
-
-const allowedImages = [
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-];
-
-const allowedArchives = [
-  "application/zip",
-  "application/x-zip-compressed",
-];
 
 const upload = multer({
   storage,
@@ -46,51 +83,35 @@ const upload = multer({
   limits: {
     fileSize: 100 * 1024 * 1024,
     files: 7,
+    fields: 10,
   },
 
   fileFilter: (_req, file, cb) => {
-    const isImageField =
-      file.fieldname === "thumbnail" ||
-      file.fieldname === "previews";
-
-    const isArchiveField =
-      file.fieldname === "templateFile";
-
     const extension = path
       .extname(file.originalname)
       .toLowerCase();
 
-    const validImage =
-      isImageField &&
-      allowedImages.includes(file.mimetype) &&
-      [".jpg", ".jpeg", ".png", ".webp"].includes(
-        extension
-      );
+    const types = allowedTypes[file.fieldname];
+    const extensions = allowedExtensions[file.fieldname];
 
-    const validArchive =
-      isArchiveField &&
-      allowedArchives.includes(file.mimetype) &&
-      extension === ".zip";
-
-    if (validImage || validArchive) {
-      cb(null, true);
-    } else {
+    if (
+      !types ||
+      !extensions ||
+      !types.includes(file.mimetype) ||
+      !extensions.includes(extension)
+    ) {
       cb(new Error("Unsupported file type"));
+      return;
     }
+
+    cb(null, true);
   },
 });
 
 export const uploadTemplateFiles = upload.fields([
-  {
-    name: "thumbnail",
-    maxCount: 1,
-  },
-  {
-    name: "previews",
-    maxCount: 5,
-  },
-  {
-    name: "templateFile",
-    maxCount: 1,
-  },
+  { name: "thumbnail", maxCount: 1 },
+  { name: "previews", maxCount: 5 },
+  { name: "templateFile", maxCount: 1 },
 ]);
+
+export { uploadRoot };
