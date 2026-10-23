@@ -4,7 +4,7 @@ import mongoose from "mongoose";
 import Template from "../models/Template.js";
 
 import { requireAdmin } from "../middleware/authMiddleware.js";
-import { uploadTemplateFiles } from "../middleware/uploadMiddleware.js";
+import { handleTemplateUpload } from "../middleware/uploadMiddleware.js";
 import { createTemplate } from "../controllers/templateController.js";
 
 
@@ -72,7 +72,7 @@ router.get("/:id", async (req, res) => {
 router.post(
   "/",
   requireAdmin,
-  uploadTemplateFiles,
+  handleTemplateUpload,
   createTemplate
 );
 

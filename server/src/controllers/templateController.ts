@@ -1,9 +1,12 @@
 
 import type { Request, Response } from "express";
+import type { Express } from "express";
 import fs from "node:fs/promises";
 import path from "node:path";
+
 import Template from "../models/Template.js";
 import { validateUploadedFiles } from "../services/fileValidationService.js";
+import { InvalidZipError } from "../services/zipValidationService.js";
 
 type UploadFields = {
   thumbnail?: Express.Multer.File[];
@@ -11,14 +14,50 @@ type UploadFields = {
   templateFile?: Express.Multer.File[];
 };
 
-async function removeFiles(files: Express.Multer.File[]) {
+async function removeFiles(
+  files: Express.Multer.File[]
+): Promise<void> {
   await Promise.all(
-    files.map((file) => fs.unlink(file.path).catch(() => {}))
+    files.map(async (file) => {
+      try {
+        await fs.unlink(file.path);
+      } catch (error) {
+        console.error("File cleanup failed:", error);
+      }
+    })
   );
 }
 
-function collectFiles(files: UploadFields) {
+function collectFiles(
+  files: UploadFields
+): Express.Multer.File[] {
   return Object.values(files).flat();
+}
+
+function relativeFilePath(file: Express.Multer.File): string {
+  return path
+    .relative(process.cwd(), file.path)
+    .replaceAll("\\", "/");
+}
+
+function getText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function isUploadValidationError(error: unknown): boolean {
+  if (error instanceof InvalidZipError) {
+    return true;
+  }
+
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return (
+    error.message.startsWith("Invalid file content") ||
+    error.message.startsWith("File type mismatch") ||
+    error.message.startsWith("Unknown upload field")
+  );
 }
 
 export const createTemplate = async (
@@ -28,105 +67,113 @@ export const createTemplate = async (
   const files = (req.files ?? {}) as UploadFields;
   const allFiles = collectFiles(files);
 
-try {
-  await validateUploadedFiles(allFiles);
+  try {
+    // 1. Check required files
 
-  const thumbnail = files.thumbnail?.[0];
+    const thumbnail = files.thumbnail?.[0];
     const original = files.templateFile?.[0];
     const previews = files.previews ?? [];
 
-    const title =
-      typeof req.body.title === "string"
-        ? req.body.title.trim()
-        : "";
+    if (!thumbnail || !original || previews.length === 0) {
+      res.status(400).json({
+        success: false,
+        message:
+          "Thumbnail, original ZIP and at least one preview are required",
+      });
 
-    const description =
-      typeof req.body.description === "string"
-        ? req.body.description.trim()
-        : "";
+      await removeFiles(allFiles);
+      return;
+    }
 
-    const category =
-      typeof req.body.category === "string"
-        ? req.body.category.trim()
-        : "";
+    // 2. Validate actual file contents
 
-    const software =
-      typeof req.body.software === "string"
-        ? req.body.software.trim()
-        : "Other";
+    await validateUploadedFiles(allFiles);
+
+    // 3. Read and validate text fields
+
+    const title = getText(req.body.title);
+    const description = getText(req.body.description);
+    const category = getText(req.body.category);
+    const software = getText(req.body.software) || "Other";
 
     if (!title || !description || !category) {
-      await removeFiles(allFiles);
-
       res.status(400).json({
-        message: "Title, description and category are required",
+        success: false,
+        message:
+          "Title, description and category are required",
       });
+
+      await removeFiles(allFiles);
       return;
-}
+    }
 
-      if (!thumbnail || !original || previews.length === 0) {
-        await removeFiles(allFiles);
-
-        res.status(400).json({
-          message:
-            "Thumbnail, original ZIP and at least one preview are required",
-        });
-        return;
-      }
+    // 4. Separate image and video previews
 
     const previewImages: string[] = [];
     const previewVideos: string[] = [];
 
     for (const file of previews) {
-      const relativePath = path
-        .relative(process.cwd(), file.path)
-        .replaceAll("\\", "/");
+      const filePath = relativeFilePath(file);
 
       if (file.mimetype.startsWith("video/")) {
-        previewVideos.push(relativePath);
+        previewVideos.push(filePath);
       } else {
-        previewImages.push(relativePath);
+        previewImages.push(filePath);
       }
     }
 
-    const tags =
-      typeof req.body.tags === "string"
-        ? req.body.tags
-            .split(",")
-            .map((tag: string) => tag.trim())
-            .filter(Boolean)
-        : [];
+    // 5. Process tags
+
+    const tags = getText(req.body.tags)
+      .split(",")
+      .map((tag) => tag.trim())
+      .filter(Boolean);
+
+    // 6. Save template metadata to MongoDB
 
     const template = await Template.create({
       title,
       description,
       category,
       software,
-      thumbnailUrl: path
-        .relative(process.cwd(), thumbnail.path)
-        .replaceAll("\\", "/"),
+
+      thumbnailUrl: relativeFilePath(thumbnail),
       previewImages,
       previewVideos,
-      downloadUrl: path
-        .relative(process.cwd(), original.path)
-        .replaceAll("\\", "/"),
-      fileSize: `${(original.size / 1024 / 1024).toFixed(2)} MB`,
+
+      downloadUrl: relativeFilePath(original),
+
+      fileSize: `${(
+        original.size /
+        (1024 * 1024)
+      ).toFixed(2)} MB`,
+
       tags,
       isFree: true,
       downloads: 0,
     });
 
+    // 7. Send success response
+
     res.status(201).json({
+      success: true,
       message: "Template uploaded successfully",
       template,
     });
   } catch (error) {
+    // 8. Remove files if validation/database fails
+
     await removeFiles(allFiles);
 
     console.error("Template upload error:", error);
 
-    res.status(500).json({
-      message: "Failed to upload template",
+    const validationError = isUploadValidationError(error);
+
+    res.status(validationError ? 400 : 500).json({
+      success: false,
+      message: validationError
+        ? "Invalid template upload"
+        : "Failed to upload template",
     });
   }
 };

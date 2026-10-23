@@ -1,6 +1,7 @@
 
 import { fileTypeFromFile } from "file-type";
 import type { Express } from "express";
+import { validateZipFile } from "./zipValidationService.js";
 
 type UploadField =
   | "thumbnail"
@@ -46,6 +47,10 @@ export async function validateUploadedFile(
       `Invalid file content: ${file.originalname}`
     );
   }
+
+  if (field === "templateFile") {
+  await validateZipFile(file.path);
+}
 
   // Ensure detected format matches declared MIME.
   // Some ZIP uploads legitimately use alternative MIME labels.

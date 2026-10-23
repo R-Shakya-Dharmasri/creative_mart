@@ -3,6 +3,15 @@ import multer from "multer";
 import path from "node:path";
 import fs from "node:fs";
 import crypto from "node:crypto";
+import type {
+  Request,
+  Response,
+  NextFunction,
+} from "express";
+
+// ======================================
+// 1. Upload directories
+// ======================================
 
 const uploadRoot = path.resolve(process.cwd(), "uploads");
 
@@ -15,6 +24,10 @@ const folders = {
 Object.values(folders).forEach((folder) => {
   fs.mkdirSync(folder, { recursive: true });
 });
+
+// ======================================
+// 2. Allowed MIME types
+// ======================================
 
 const allowedTypes: Record<string, string[]> = {
   thumbnail: [
@@ -39,6 +52,10 @@ const allowedTypes: Record<string, string[]> = {
   ],
 };
 
+// ======================================
+// 3. Allowed extensions
+// ======================================
+
 const allowedExtensions: Record<string, string[]> = {
   thumbnail: [".jpg", ".jpeg", ".png", ".webp"],
 
@@ -55,6 +72,49 @@ const allowedExtensions: Record<string, string[]> = {
   templateFile: [".zip"],
 };
 
+// ======================================
+// 4. Track files written per request
+// ======================================
+
+const uploadedFiles = new WeakMap<Request, Set<string>>();
+
+function trackFile(req: Request, filePath: string): void {
+  let paths = uploadedFiles.get(req);
+
+  if (!paths) {
+    paths = new Set<string>();
+    uploadedFiles.set(req, paths);
+  }
+
+  paths.add(filePath);
+}
+
+function cleanupTrackedFiles(req: Request): void {
+  const paths = uploadedFiles.get(req);
+
+  if (!paths) return;
+
+  for (const filePath of paths) {
+    try {
+      fs.unlinkSync(filePath);
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !("code" in error) ||
+        error.code !== "ENOENT"
+      ) {
+        console.error("Upload cleanup error:", error);
+      }
+    }
+  }
+
+  uploadedFiles.delete(req);
+}
+
+// ======================================
+// 5. Multer disk storage
+// ======================================
+
 const storage = multer.diskStorage({
   destination: (_req, file, cb) => {
     const folder =
@@ -68,14 +128,30 @@ const storage = multer.diskStorage({
     cb(null, folder);
   },
 
-  filename: (_req, file, cb) => {
+  filename: (req, file, cb) => {
     const extension = path
       .extname(file.originalname)
       .toLowerCase();
 
-    cb(null, `${crypto.randomUUID()}${extension}`);
+    const filename = `${crypto.randomUUID()}${extension}`;
+
+    const folder =
+      folders[file.fieldname as keyof typeof folders];
+
+    if (!folder) {
+      cb(new Error("Invalid upload field"), "");
+      return;
+    }
+
+    trackFile(req, path.join(folder, filename));
+
+    cb(null, filename);
   },
 });
+
+// ======================================
+// 6. Multer configuration
+// ======================================
 
 const upload = multer({
   storage,
@@ -84,6 +160,7 @@ const upload = multer({
     fileSize: 100 * 1024 * 1024,
     files: 7,
     fields: 10,
+    parts: 17,
   },
 
   fileFilter: (_req, file, cb) => {
@@ -108,10 +185,51 @@ const upload = multer({
   },
 });
 
+// ======================================
+// 7. Upload fields
+// ======================================
+
 export const uploadTemplateFiles = upload.fields([
   { name: "thumbnail", maxCount: 1 },
   { name: "previews", maxCount: 5 },
   { name: "templateFile", maxCount: 1 },
 ]);
+
+// ======================================
+// 8. Error handling middleware
+// ======================================
+
+export function handleTemplateUpload(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void {
+  uploadTemplateFiles(req, res, (error: unknown) => {
+    if (!error) {
+      uploadedFiles.delete(req);
+      next();
+      return;
+    }
+
+    cleanupTrackedFiles(req);
+
+    if (error instanceof multer.MulterError) {
+      const status =
+        error.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+
+      res.status(status).json({
+        message: error.message,
+      });
+
+      return;
+    }
+
+    console.error("Upload middleware error:", error);
+
+    res.status(400).json({
+      message: "Invalid file upload",
+    });
+  });
+}
 
 export { uploadRoot };
