@@ -2,8 +2,8 @@
 import yauzl from "yauzl";
 
 const MAX_ENTRIES = 2000;
-const MAX_UNCOMPRESSED_SIZE = 500 * 1024 * 1024;
-const MAX_SINGLE_FILE_SIZE = 200 * 1024 * 1024;
+const MAX_TOTAL_SIZE = 500 * 1024 * 1024;
+const MAX_FILE_SIZE = 200 * 1024 * 1024;
 
 export class InvalidZipError extends Error {
   constructor(message: string) {
@@ -30,15 +30,15 @@ export function validateZipFile(
           return;
         }
 
+        let settled = false;
         let entryCount = 0;
-        let totalUncompressedSize = 0;
-        let finished = false;
+        let totalSize = 0;
 
         const fail = (message: string) => {
-          if (finished) return;
-          finished = true;
-          zipfile.close();
+          if (settled) return;
+          settled = true;
           reject(new InvalidZipError(message));
+          zipfile.close();
         };
 
         zipfile.on("error", () => {
@@ -46,38 +46,37 @@ export function validateZipFile(
         });
 
         zipfile.on("entry", (entry) => {
-          if (finished) return;
+          if (settled) return;
 
           entryCount++;
 
-          if (entryCount > MAX_ENTRIES) {
-            fail("ZIP contains too many files");
-            return;
-          }
-
-          const filename = entry.fileName.replaceAll("\\", "/");
-
-          const segments = filename.split("/");
+          const name = entry.fileName;
 
           if (
-            filename.startsWith("/") ||
-            /^[a-zA-Z]:/.test(filename) ||
-            segments.includes("..") ||
-            filename.includes("\0")
+            name.startsWith("/") ||
+            /^[a-zA-Z]:/.test(name) ||
+            name.split("/").includes("..") ||
+            name.includes("\\") ||
+            name.includes("\0")
           ) {
-            fail("ZIP contains an unsafe file path");
+            fail("Unsafe file path inside ZIP");
             return;
           }
 
-          if (entry.uncompressedSize > MAX_SINGLE_FILE_SIZE) {
-            fail("ZIP contains an oversized file");
+          if (entryCount > MAX_ENTRIES) {
+            fail("Too many files inside ZIP");
             return;
           }
 
-          totalUncompressedSize += entry.uncompressedSize;
+          if (entry.uncompressedSize > MAX_FILE_SIZE) {
+            fail("File inside ZIP is too large");
+            return;
+          }
 
-          if (totalUncompressedSize > MAX_UNCOMPRESSED_SIZE) {
-            fail("ZIP exceeds uncompressed size limit");
+          totalSize += entry.uncompressedSize;
+
+          if (totalSize > MAX_TOTAL_SIZE) {
+            fail("ZIP uncompressed size exceeds limit");
             return;
           }
 
@@ -85,16 +84,20 @@ export function validateZipFile(
         });
 
         zipfile.on("end", () => {
-          if (finished) return;
+          if (settled) return;
 
           if (entryCount === 0) {
-            fail("ZIP archive is empty");
+            fail("ZIP is empty");
             return;
           }
 
-          finished = true;
+          settled = true;
           resolve();
         });
+
+        // IMPORTANT:
+        // Start reading the first ZIP entry.
+        zipfile.readEntry();
       }
     );
   });

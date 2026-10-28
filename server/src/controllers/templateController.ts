@@ -87,7 +87,13 @@ export const createTemplate = async (
 
     // 2. Validate actual file contents
 
+    //await validateUploadedFiles(allFiles);
+
+    console.log("STEP 1: Starting file validation");
+
     await validateUploadedFiles(allFiles);
+
+    console.log("STEP 2: File validation completed");
 
     // 3. Read and validate text fields
 
@@ -131,6 +137,8 @@ export const createTemplate = async (
 
     // 6. Save template metadata to MongoDB
 
+    console.log("STEP 3: Starting MongoDB save");
+
     const template = await Template.create({
       title,
       description,
@@ -152,6 +160,8 @@ export const createTemplate = async (
       isFree: true,
       downloads: 0,
     });
+
+    console.log("STEP 4: MongoDB save completed");
 
     // 7. Send success response
 
