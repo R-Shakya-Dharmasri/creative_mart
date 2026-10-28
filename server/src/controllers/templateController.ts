@@ -187,3 +187,101 @@ export const createTemplate = async (
     });
   }
 };
+
+
+export const downloadTemplate = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    // 1. Find template in MongoDB
+    const template = await Template.findById(id);
+
+    if (!template) {
+      res.status(404).json({
+        success: false,
+        message: "Template not found",
+      });
+      return;
+    }
+
+    // 2. Allow only free templates
+    if (!template.isFree) {
+      res.status(403).json({
+        success: false,
+        message: "This template is not available for free download",
+      });
+      return;
+    }
+
+    // 3. Resolve file path safely
+    const originalsDirectory = path.resolve(
+      process.cwd(),
+      "uploads",
+      "originals"
+    );
+
+    const filePath = path.resolve(
+      process.cwd(),
+      template.downloadUrl
+    );
+
+    // Prevent access outside originals directory
+    if (
+      path.dirname(filePath) !== originalsDirectory ||
+      path.extname(filePath).toLowerCase() !== ".zip"
+    ) {
+      res.status(403).json({
+        success: false,
+        message: "Invalid download file",
+      });
+      return;
+    }
+
+    // 4. Verify file exists
+    try {
+      await fs.access(filePath);
+    } catch {
+      res.status(404).json({
+        success: false,
+        message: "Download file not found",
+      });
+      return;
+    }
+
+    // 5. Download file
+    res.download(
+      filePath,
+      `${template._id}.zip`,
+      async (error) => {
+        if (error) {
+          console.error("Download failed:", error);
+          return;
+        }
+
+        // 6. Increase download count after successful transfer
+        try {
+          await Template.findByIdAndUpdate(template._id, {
+            $inc: { downloads: 1 },
+          });
+        } catch (updateError) {
+          console.error(
+            "Failed to update download count:",
+            updateError
+          );
+        }
+      }
+    );
+  } catch (error) {
+    console.error("Template download error:", error);
+
+    if (!res.headersSent) {
+      res.status(500).json({
+        success: false,
+        message: "Failed to download template",
+      });
+    }
+  }
+};

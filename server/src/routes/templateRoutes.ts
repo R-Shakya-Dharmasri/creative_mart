@@ -5,7 +5,10 @@ import Template from "../models/Template.js";
 
 import { requireAdmin } from "../middleware/authMiddleware.js";
 import { handleTemplateUpload } from "../middleware/uploadMiddleware.js";
-import { createTemplate } from "../controllers/templateController.js";
+import {
+  createTemplate,
+  downloadTemplate,
+} from "../controllers/templateController.js";
 
 
 const router = Router();
@@ -29,6 +32,21 @@ router.get("/", async (_req, res) => {
       message: "Failed to fetch templates",
     });
   }
+});
+
+// GET /api/templates/:id/download
+router.get("/:id/download", async (req, res) => {
+  const { id } = req.params;
+
+  if (!id || !mongoose.isValidObjectId(id)) {
+    res.status(400).json({
+      success: false,
+      message: "Invalid template ID",
+    });
+    return;
+  }
+
+  await downloadTemplate(req, res);
 });
 
 // GET /api/templates/:id - Get single template
