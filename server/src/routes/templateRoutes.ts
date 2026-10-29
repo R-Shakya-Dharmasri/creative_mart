@@ -8,6 +8,8 @@ import { handleTemplateUpload } from "../middleware/uploadMiddleware.js";
 import {
   createTemplate,
   downloadTemplate,
+  updateTemplate,
+  deleteTemplate,
 } from "../controllers/templateController.js";
 
 
@@ -16,9 +18,9 @@ const router = Router();
 // GET /api/templates - Get all templates
 router.get("/", async (_req, res) => {
   try {
-    const templates = await Template.find().sort({
-      createdAt: -1,
-    });
+    const templates = await Template.find()
+      .select("-downloadUrl -__v")
+      .sort({ createdAt: -1 });
 
     res.status(200).json({
       success: true,
@@ -62,7 +64,8 @@ router.get("/:id", async (req, res) => {
       return;
     }
 
-    const template = await Template.findById(id);
+    const template = await Template.findById(id)
+        .select("-downloadUrl -__v");
 
     if (!template) {
       res.status(404).json({
@@ -93,6 +96,12 @@ router.post(
   handleTemplateUpload,
   createTemplate
 );
+
+// PATCH /api/templates/:id - Admin only
+router.patch("/:id", requireAdmin, updateTemplate);
+
+// DELETE /api/templates/:id - Admin only
+router.delete("/:id", requireAdmin, deleteTemplate);
 
 
 export default router;

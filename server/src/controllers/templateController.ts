@@ -285,3 +285,241 @@ export const downloadTemplate = async (
     }
   }
 };
+
+
+export const updateTemplate = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const id = String(req.params.id ?? "");
+
+    if (!id || !/^[a-f\d]{24}$/i.test(id)) {
+      res.status(400).json({
+        success: false,
+        message: "Invalid template ID",
+      });
+      return;
+    }
+
+    const allowedFields = [
+      "title",
+      "description",
+      "category",
+      "software",
+      "tags",
+    ] as const;
+
+    const updates: Record<string, string | string[]> = {};
+
+    // Only accept editable fields
+    for (const field of allowedFields) {
+      if (!Object.prototype.hasOwnProperty.call(req.body, field)) {
+        continue;
+      }
+
+      const value: unknown = req.body[field];
+
+      if (field === "tags") {
+        if (
+          !Array.isArray(value) ||
+          !value.every((tag) => typeof tag === "string")
+        ) {
+          res.status(400).json({
+            success: false,
+            message: "Tags must be an array of strings",
+          });
+          return;
+        }
+
+        updates.tags = value.map((tag) => tag.trim());
+      } else {
+        if (typeof value !== "string") {
+          res.status(400).json({
+            success: false,
+            message: `${field} must be a string`,
+          });
+          return;
+        }
+
+        const trimmed = value.trim();
+
+        if (!trimmed) {
+          res.status(400).json({
+            success: false,
+            message: `${field} cannot be empty`,
+          });
+          return;
+        }
+
+        updates[field] = trimmed;
+      }
+    }
+
+    if (Object.keys(updates).length === 0) {
+      res.status(400).json({
+        success: false,
+        message: "No valid fields provided",
+      });
+      return;
+    }
+
+    const template = await Template.findByIdAndUpdate(
+      id,
+      { $set: updates },
+      {
+        new: true,
+        runValidators: true,
+      }
+    ).select("-downloadUrl -__v");
+
+    if (!template) {
+      res.status(404).json({
+        success: false,
+        message: "Template not found",
+      });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Template updated successfully",
+      template,
+    });
+  } catch (error) {
+    console.error("Update template error:", error);
+
+    if (
+      error instanceof Error &&
+      error.name === "ValidationError"
+    ) {
+      res.status(400).json({
+        success: false,
+        message: "Invalid template data",
+      });
+      return;
+    }
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to update template",
+    });
+  }
+};
+
+
+export const deleteTemplate = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const id = String(req.params.id ?? "");
+
+    if (!/^[a-f\d]{24}$/i.test(id)) {
+      res.status(400).json({
+        success: false,
+        message: "Invalid template ID",
+      });
+      return;
+    }
+
+    const template = await Template.findById(id);
+
+    if (!template) {
+      res.status(404).json({
+        success: false,
+        message: "Template not found",
+      });
+      return;
+    }
+
+    // Only allow files from expected upload directories.
+    const allowedDirectories = [
+      path.resolve(process.cwd(), "uploads", "thumbnails"),
+      path.resolve(process.cwd(), "uploads", "previews"),
+      path.resolve(process.cwd(), "uploads", "originals"),
+    ];
+
+    const filePaths = [
+      template.thumbnailUrl,
+      ...template.previewImages,
+      ...template.previewVideos,
+      template.downloadUrl,
+    ];
+
+    const safePaths: string[] = [];
+
+    for (const storedPath of filePaths) {
+      if (typeof storedPath !== "string" || !storedPath) {
+        continue;
+      }
+
+      const absolutePath = path.resolve(
+        process.cwd(),
+        storedPath
+      );
+
+      if (
+        !allowedDirectories.includes(
+          path.dirname(absolutePath)
+        )
+      ) {
+        console.error(
+          "Unsafe template file path:",
+          storedPath
+        );
+
+        res.status(500).json({
+          success: false,
+          message: "Template has an invalid file path",
+        });
+        return;
+      }
+
+      safePaths.push(absolutePath);
+    }
+
+    // Delete database record first.
+    await Template.findByIdAndDelete(id);
+
+    // Clean up associated uploaded files.
+    const results = await Promise.allSettled(
+      [...new Set(safePaths)].map((filePath) =>
+        fs.unlink(filePath)
+      )
+    );
+
+    const failedFiles = results.filter(
+      (result) =>
+        result.status === "rejected" &&
+        !(
+          result.reason instanceof Error &&
+          "code" in result.reason &&
+          result.reason.code === "ENOENT"
+        )
+    );
+
+    if (failedFiles.length > 0) {
+      console.error(
+        "Some template files could not be deleted:",
+        failedFiles
+      );
+    }
+
+    res.status(200).json({
+      success: true,
+      message:
+        failedFiles.length === 0
+          ? "Template deleted successfully"
+          : "Template deleted, but some files require cleanup",
+      cleanupComplete: failedFiles.length === 0,
+    });
+  } catch (error) {
+    console.error("Delete template error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to delete template",
+    });
+  }
+};

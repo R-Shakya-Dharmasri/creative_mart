@@ -1,5 +1,6 @@
 
 import { useCallback, useEffect, useState } from "react";
+import type { FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -10,6 +11,10 @@ import {
   Plus,
   LogOut,
   RefreshCw,
+  Pencil,
+  X,
+  Save,
+  Trash2,
 } from "lucide-react";
 
 import api from "../../services/api";
@@ -18,7 +23,10 @@ import { logoutAdmin } from "../../services/authService";
 interface Template {
   _id: string;
   title: string;
+  description: string;
   category: string;
+  software: string;
+  tags: string[];
   downloads: number;
 }
 
@@ -27,13 +35,48 @@ interface TemplatesResponse {
   templates: Template[];
 }
 
+interface DeleteResponse {
+  success: boolean;
+  message: string;
+  cleanupComplete?: boolean;
+}
+
+interface EditForm {
+  title: string;
+  description: string;
+  category: string;
+  software: string;
+  tags: string;
+}
+
 export default function AdminDashboard() {
   const navigate = useNavigate();
 
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
 
+  const [editingTemplate, setEditingTemplate] =
+    useState<Template | null>(null);
+
+  const [editForm, setEditForm] = useState<EditForm>({
+    title: "",
+    description: "",
+    category: "",
+    software: "",
+    tags: "",
+  });
+
+  const [saving, setSaving] = useState(false);
+  const [editError, setEditError] = useState("");
+
+  // Delete states
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [templateToDelete, setTemplateToDelete] =
+    useState<Template | null>(null);
+
+  // Fetch templates from MongoDB
   const fetchTemplates = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -55,11 +98,142 @@ export default function AdminDashboard() {
     void fetchTemplates();
   }, [fetchTemplates]);
 
+  // Logout
   function handleLogout() {
     logoutAdmin();
     navigate("/admin/login", { replace: true });
   }
 
+  // Open edit modal
+  function handleEdit(template: Template) {
+    setEditingTemplate(template);
+    setEditError("");
+    setSuccessMessage("");
+
+    setEditForm({
+      title: template.title,
+      description: template.description,
+      category: template.category,
+      software: template.software,
+      tags: template.tags.join(", "),
+    });
+  }
+
+  function handleCloseEdit() {
+    if (saving) return;
+
+    setEditingTemplate(null);
+    setEditError("");
+  }
+
+  function handleInputChange(
+    field: keyof EditForm,
+    value: string
+  ) {
+    setEditForm((previous) => ({
+      ...previous,
+      [field]: value,
+    }));
+  }
+
+  // Save edited template
+  async function handleSaveEdit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!editingTemplate || saving) return;
+
+    setSaving(true);
+    setEditError("");
+
+    try {
+      const payload = {
+        title: editForm.title.trim(),
+        description: editForm.description.trim(),
+        category: editForm.category.trim(),
+        software: editForm.software.trim(),
+        tags: editForm.tags
+          .split(",")
+          .map((tag) => tag.trim())
+          .filter(Boolean),
+      };
+
+      await api.patch(
+        `/templates/${editingTemplate._id}`,
+        payload
+      );
+
+      setEditingTemplate(null);
+      setSuccessMessage("Template updated successfully!");
+
+      await fetchTemplates();
+    } catch (err) {
+      console.error("Update template failed:", err);
+
+      setEditError(
+        "Failed to update template. Check your admin login and try again."
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Open delete confirmation
+  function handleDeleteClick(template: Template) {
+    if (deletingId !== null) return;
+
+    setTemplateToDelete(template);
+    setSuccessMessage("");
+    setError("");
+  }
+
+  function handleCancelDelete() {
+    if (deletingId !== null) return;
+    setTemplateToDelete(null);
+  }
+
+  // Confirm permanent deletion
+  async function handleConfirmDelete() {
+    if (!templateToDelete || deletingId !== null) return;
+
+    const templateId = templateToDelete._id;
+
+    setDeletingId(templateId);
+    setError("");
+    setSuccessMessage("");
+
+    try {
+      const { data } = await api.delete<DeleteResponse>(
+        `/templates/${templateId}`
+      );
+
+      if (!data.success) {
+        throw new Error(data.message || "Delete failed");
+      }
+
+      setTemplateToDelete(null);
+
+      // Refresh table and statistics
+      await fetchTemplates();
+
+      if (data.cleanupComplete === false) {
+        setError(
+          "Template deleted, but some uploaded files require cleanup. Check server logs."
+        );
+      } else {
+        setSuccessMessage("Template deleted successfully!");
+      }
+    } catch (err) {
+      console.error("Delete template failed:", err);
+
+      setError(
+        "Failed to delete template. Please check your admin login or server logs."
+      );
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  // Dashboard statistics
   const totalDownloads = templates.reduce(
     (total, template) => total + template.downloads,
     0
@@ -87,6 +261,8 @@ export default function AdminDashboard() {
 
   return (
     <main className="mx-auto max-w-7xl px-6 py-12">
+
+      {/* Dashboard Header */}
       <div className="mb-10 flex flex-wrap items-center justify-between gap-4">
         <div>
           <div className="mb-2 flex items-center gap-2 text-violet-400">
@@ -149,8 +325,19 @@ export default function AdminDashboard() {
         })}
       </div>
 
+      {/* Success Message */}
+      {successMessage && (
+        <div
+          role="status"
+          className="mt-8 rounded-xl border border-green-500/30 bg-green-500/10 p-4 text-sm text-green-400"
+        >
+          {successMessage}
+        </div>
+      )}
+
       {/* Template Management */}
       <div className="mt-12 rounded-2xl border border-zinc-800 bg-zinc-900">
+
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-zinc-800 p-6">
           <div>
             <h2 className="text-xl font-bold">
@@ -165,7 +352,7 @@ export default function AdminDashboard() {
           <button
             type="button"
             onClick={() => void fetchTemplates()}
-            disabled={loading}
+            disabled={loading || deletingId !== null}
             className="flex items-center gap-2 text-violet-400 hover:text-violet-300 disabled:opacity-50"
           >
             <RefreshCw size={18} />
@@ -174,7 +361,10 @@ export default function AdminDashboard() {
         </div>
 
         {error && (
-          <div className="m-5 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
+          <div
+            role="alert"
+            className="m-5 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400"
+          >
             {error}
           </div>
         )}
@@ -186,7 +376,7 @@ export default function AdminDashboard() {
                 <th className="p-5">Template</th>
                 <th className="p-5">Category</th>
                 <th className="p-5">Downloads</th>
-                <th className="p-5">Action</th>
+                <th className="p-5">Actions</th>
               </tr>
             </thead>
 
@@ -228,13 +418,42 @@ export default function AdminDashboard() {
                     </td>
 
                     <td className="p-5">
-                      <Link
-                        to={`/templates/${template._id}`}
-                        className="inline-flex items-center gap-2 text-violet-400 hover:text-violet-300"
-                      >
-                        <Eye size={16} />
-                        View
-                      </Link>
+                      <div className="flex items-center gap-5">
+
+                        {/* View */}
+                        <Link
+                          to={`/templates/${template._id}`}
+                          className="inline-flex items-center gap-2 text-violet-400 hover:text-violet-300"
+                        >
+                          <Eye size={16} />
+                          View
+                        </Link>
+
+                        {/* Edit */}
+                        <button
+                          type="button"
+                          onClick={() => handleEdit(template)}
+                          disabled={deletingId !== null}
+                          className="inline-flex items-center gap-2 text-blue-400 hover:text-blue-300 disabled:opacity-50"
+                        >
+                          <Pencil size={16} />
+                          Edit
+                        </button>
+
+                        {/* Delete */}
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteClick(template)}
+                          disabled={deletingId !== null}
+                          className="inline-flex items-center gap-2 text-red-400 hover:text-red-300 disabled:opacity-50"
+                        >
+                          <Trash2 size={16} />
+                          {deletingId === template._id
+                            ? "Deleting..."
+                            : "Delete"}
+                        </button>
+
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -251,6 +470,205 @@ export default function AdminDashboard() {
           <Upload size={18} className="text-violet-400" />
         </div>
       </div>
+
+      {/* Edit Template Modal */}
+      {editingTemplate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="edit-template-title"
+            className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-zinc-700 bg-zinc-900 p-6 shadow-2xl"
+          >
+            <div className="mb-6 flex items-center justify-between">
+              <h2
+                id="edit-template-title"
+                className="text-xl font-bold"
+              >
+                Edit Template
+              </h2>
+
+              <button
+                type="button"
+                onClick={handleCloseEdit}
+                disabled={saving}
+                aria-label="Close edit form"
+                className="text-zinc-400 hover:text-white disabled:opacity-50"
+              >
+                <X size={22} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEdit} className="space-y-5">
+
+              <div>
+                <label className="mb-2 block text-sm text-zinc-400">
+                  Title
+                </label>
+                <input
+                  type="text"
+                  required
+                  maxLength={150}
+                  value={editForm.title}
+                  onChange={(event) =>
+                    handleInputChange("title", event.target.value)
+                  }
+                  className="w-full rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-white outline-none focus:border-violet-500"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm text-zinc-400">
+                  Description
+                </label>
+                <textarea
+                  required
+                  maxLength={5000}
+                  rows={4}
+                  value={editForm.description}
+                  onChange={(event) =>
+                    handleInputChange("description", event.target.value)
+                  }
+                  className="w-full rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-white outline-none focus:border-violet-500"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm text-zinc-400">
+                  Category
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editForm.category}
+                  onChange={(event) =>
+                    handleInputChange("category", event.target.value)
+                  }
+                  className="w-full rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-white outline-none focus:border-violet-500"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm text-zinc-400">
+                  Software
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editForm.software}
+                  onChange={(event) =>
+                    handleInputChange("software", event.target.value)
+                  }
+                  className="w-full rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-white outline-none focus:border-violet-500"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm text-zinc-400">
+                  Tags (comma separated)
+                </label>
+                <input
+                  type="text"
+                  value={editForm.tags}
+                  onChange={(event) =>
+                    handleInputChange("tags", event.target.value)
+                  }
+                  placeholder="cv, resume, modern"
+                  className="w-full rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-white outline-none focus:border-violet-500"
+                />
+              </div>
+
+              {editError && (
+                <p role="alert" className="text-sm text-red-400">
+                  {editError}
+                </p>
+              )}
+
+              <div className="flex justify-end gap-3 pt-3">
+                <button
+                  type="button"
+                  onClick={handleCloseEdit}
+                  disabled={saving}
+                  className="rounded-xl border border-zinc-700 px-5 py-3 text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="flex items-center gap-2 rounded-xl bg-violet-600 px-5 py-3 font-semibold text-white hover:bg-violet-700 disabled:opacity-50"
+                >
+                  <Save size={18} />
+                  {saving ? "Saving..." : "Save Changes"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {templateToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4">
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="delete-template-title"
+            aria-describedby="delete-template-description"
+            className="w-full max-w-md rounded-2xl border border-red-500/30 bg-zinc-900 p-6 shadow-2xl"
+          >
+            <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-red-500/10 text-red-400">
+              <Trash2 size={24} />
+            </div>
+
+            <h2
+              id="delete-template-title"
+              className="text-xl font-bold text-white"
+            >
+              Delete Template?
+            </h2>
+
+            <p
+              id="delete-template-description"
+              className="mt-3 text-sm leading-6 text-zinc-400"
+            >
+              Are you sure you want to permanently delete{" "}
+              <span className="font-semibold text-white">
+                {templateToDelete.title}
+              </span>
+              ?
+              <br />
+              This will remove the template and its uploaded files.
+              This action cannot be undone.
+            </p>
+
+            <div className="mt-7 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={handleCancelDelete}
+                disabled={deletingId !== null}
+                className="rounded-xl border border-zinc-700 px-5 py-3 text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={() => void handleConfirmDelete()}
+                disabled={deletingId !== null}
+                className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-5 py-3 font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                <Trash2 size={18} />
+                {deletingId !== null
+                  ? "Deleting..."
+                  : "Delete Permanently"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </main>
   );
 }
