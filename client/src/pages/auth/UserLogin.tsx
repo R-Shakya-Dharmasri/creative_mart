@@ -11,10 +11,12 @@ import {
   LogIn,
 } from "lucide-react";
 import { loginUser } from "../../services/userAuthService";
+import { useUserAuth } from "../../context/UserAuthContext";
 
 export default function UserLogin() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { refreshUser } = useUserAuth();
 
   const message = (
     location.state as { message?: string } | null
@@ -33,6 +35,7 @@ export default function UserLogin() {
 
     try {
       await loginUser(email, password);
+      await refreshUser();
       navigate("/", { replace: true });
     } catch (err) {
       if (err instanceof AxiosError) {
