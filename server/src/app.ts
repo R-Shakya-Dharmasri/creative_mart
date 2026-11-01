@@ -3,14 +3,27 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
+import path from "node:path";
+
 
 import authRoutes from "./routes/authRoutes.js";
 import templateRoutes from "./routes/templateRoutes.js";
 
 const app = express();
 
+const uploadsPath = path.resolve(
+  process.cwd(),
+  "uploads"
+);
+
 // Security headers
-app.use(helmet());
+app.use(
+  helmet({
+    crossOriginResourcePolicy: {
+      policy: "cross-origin",
+    },
+  })
+);
 
 // Allow React frontend
 app.use(
@@ -38,6 +51,22 @@ app.use(
   })
 );
 
+// Public thumbnail images
+app.use(
+  "/uploads/thumbnails",
+  express.static(
+    path.join(uploadsPath, "thumbnails")
+  )
+);
+
+// Public preview images
+app.use(
+  "/uploads/previews",
+  express.static(
+    path.join(uploadsPath, "previews")
+  )
+);
+
 // Root route
 app.get("/", (_req, res) => {
   res.status(200).json({
@@ -58,7 +87,7 @@ app.get("/api/health", (_req, res) => {
 // Admin authentication routes
 app.use("/api/admin", authRoutes);
 
-// Public template routes
+// Template routes
 app.use("/api/templates", templateRoutes);
 
 // 404 handler for unknown API routes
