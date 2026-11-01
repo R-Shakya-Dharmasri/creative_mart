@@ -4,6 +4,7 @@ import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import path from "node:path";
+import userAuthRoutes from "./routes/userAuthRoutes.js";
 
 
 import authRoutes from "./routes/authRoutes.js";
@@ -86,6 +87,9 @@ app.get("/api/health", (_req, res) => {
 
 // Admin authentication routes
 app.use("/api/admin", authRoutes);
+
+//User authentication routes
+app.use("/api/users", userAuthRoutes);
 
 // Template routes
 app.use("/api/templates", templateRoutes);
